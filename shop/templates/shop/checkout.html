@@ -1,0 +1,181 @@
+{% extends 'shop/basic.html' %}
+
+{% block title %}Checkout - Khuzaima Grocery Store{% endblock %}
+
+{% block body %}
+<div class="container">
+  <div class="col my-4">
+    <h2>Step 1 - Khuzaima Grocery Store Express Checkout - Review Your Cart Items</h2>
+    <div class="my-4">
+      <ul class="list-group" id="items"></ul>
+      <nav aria-label="breadcrumb">
+        <ol class="breadcrumb mt-3">
+          <li class="breadcrumb-item active" aria-current="page">
+            Your Cart Total Is <b>Rs.<span id="totalPrice">0</span></b>
+            Enter your details below &amp; place your order.
+          </li>
+        </ol>
+      </nav>
+    </div>
+  </div>
+
+  <div class="col my-4">
+    <h2>Step 2 - Enter Address &amp; Other Details:</h2>
+
+    <!-- ▼ UNCOMMENTED: this form now wraps everything below ▼ -->
+    <form id="checkout-form" method="post" action="">
+      {% csrf_token %}
+      <input type="hidden" name="itemsJson" id="itemsJson">
+      <input type="hidden" name="amount" id="amount">
+
+      <!-- PayFast hidden fields (still commented out) -->
+      {# 
+      <input type="hidden" name="merchant_id" value="{{ merchant_id }}">
+      <input type="hidden" name="transaction_id" value="{{ transaction_id }}">
+      #}
+
+      <!-- Customer Details -->
+      <div class="form-row">
+        <div class="form-group col-md-6">
+          <label for="name">Name</label>
+          <input type="text" class="form-control" id="name" name="name" required>
+        </div>
+        <div class="form-group col-md-6">
+          <label for="email">Email</label>
+          <input type="email" class="form-control" id="email" name="email" required>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="address1">Address</label>
+        <input type="text" class="form-control" id="address1" name="address1" required>
+      </div>
+      <div class="form-group">
+        <label for="address2">Address line 2</label>
+        <input type="text" class="form-control" id="address2" name="address2">
+      </div>
+      <div class="form-row">
+        <div class="form-group col-md-6">
+          <label for="city">City</label>
+          <input type="text" class="form-control" id="city" name="city" required>
+        </div>
+        <div class="form-group col-md-4">
+          <label for="state">State</label>
+          <input type="text" class="form-control" id="state" name="state" required>
+        </div>
+        <div class="form-group col-md-2">
+          <label for="zip_code">Zip</label>
+          <input type="text" class="form-control" id="zip_code" name="zip_code" required>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="phone">Phone Number</label>
+        <input type="tel" class="form-control" id="phone" name="phone" required>
+      </div>
+
+      <!-- Google Pay button container -->
+      <div id="google-pay-button" class="my-3"></div>
+
+      <!-- Fallback Place Order button -->
+      <button type="submit" class="btn btn-primary" id="place-order-btn">
+        Place Order
+      </button>
+    </form>
+    <!-- ▲ Form ends here ▲ -->
+     
+    {% if thank %}
+    <script>
+      alert('Thank you! Your tracker ID is {{ id }}');
+    </script>
+  {% endif %}
+
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+  <!-- Google Pay Integration -->
+  <script>
+    const cart = JSON.parse(localStorage.getItem('cart') || '{}');
+    let total = 0;
+    if ($.isEmptyObject(cart)) {
+      $('#items').append('<p>Your cart is empty</p>');
+    } else {
+      Object.values(cart).forEach(([qty, name, price]) => {
+        total += qty * price;
+        $('#items').append(`
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            ${name}
+            <span class="badge badge-primary badge-pill">${qty}</span>
+          </li>
+        `);
+      });
+    }
+    $('#totalPrice').text(total.toFixed(2));
+    $('#amount').val(total.toFixed(2));
+    $('#itemsJson').val(JSON.stringify(cart));
+
+    // --- Google Pay Setup ---
+    let paymentsClient;
+    function getGoogleIsReadyToPayRequest() {
+      return {
+        apiVersion: 2,
+        apiVersionMinor: 0,
+        allowedPaymentMethods: [{
+          type: 'CARD',
+          parameters: {
+            allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+            allowedCardNetworks: ['VISA', 'MASTERCARD']
+          }
+        }]
+      };
+    }
+    function getGooglePaymentDataRequest() {
+      return Object.assign({}, getGoogleIsReadyToPayRequest(), {
+        allowedPaymentMethods: [{
+          type: 'CARD',
+          tokenizationSpecification: {
+            type: 'PAYMENT_GATEWAY',
+            parameters: {
+              gateway: 'example',
+              gatewayMerchantId: 'exampleGatewayMerchantId'
+            }
+          },
+          parameters: {
+            allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+            allowedCardNetworks: ['VISA', 'MASTERCARD']
+          }
+        }],
+        transactionInfo: {
+          totalPriceStatus: 'FINAL',
+          totalPrice: total.toFixed(2),
+          currencyCode: 'PKR'
+        },
+        merchantInfo: {
+          merchantId: '01234567890123456789',
+          merchantName: 'Khuzaima Grocery Store'
+        }
+      });
+    }
+    function onGooglePayLoaded() {
+      paymentsClient = new google.payments.api.PaymentsClient({ environment: 'TEST' });
+      paymentsClient.isReadyToPay(getGoogleIsReadyToPayRequest())
+        .then(response => {
+          if (response.result) {
+            const btn = paymentsClient.createButton({ onClick: onGooglePayButtonClicked });
+            document.getElementById('google-pay-button').appendChild(btn);
+          }
+        })
+        .catch(console.error);
+    }
+    function onGooglePayButtonClicked() {
+      paymentsClient.loadPaymentData(getGooglePaymentDataRequest())
+        .then(paymentData => {
+          console.log('Received gpay token:', paymentData.paymentMethodData.tokenizationData.token);
+          alert('Payment success! Token: ' + paymentData.paymentMethodData.tokenizationData.token);
+          $('#place-order-btn').hide();
+        })
+        .catch(console.error);
+    }
+  </script>
+  <script async src="https://pay.google.com/gp/p/js/pay.js" onload="onGooglePayLoaded()"></script>
+{% endblock %}
